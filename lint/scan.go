@@ -132,6 +132,67 @@ func stripSQLComments(s string) string {
 	return b.String()
 }
 
+// splitTopLevel splits src on occurrences of sep that sit at
+// parenthesis depth zero, treating string/quoted-identifier literals
+// and comments as opaque so a separator or paren inside one of those
+// has no effect. It's used to break an ALTER TABLE statement's
+// comma-separated actions apart without being fooled by a comma inside
+// a type's argument list (VARCHAR(255, 0)) or a CHECK expression.
+func splitTopLevel(src []byte, sep byte) [][2]int {
+	var chunks [][2]int
+	n := len(src)
+	depth := 0
+	start := 0
+	i := 0
+
+	for i < n {
+		c := src[i]
+		switch {
+		case c == '-' && i+1 < n && src[i+1] == '-':
+			for i < n && src[i] != '\n' {
+				i++
+			}
+
+		case c == '/' && i+1 < n && src[i+1] == '*':
+			j := i + 2
+			for j+1 < n && !(src[j] == '*' && src[j+1] == '/') {
+				j++
+			}
+			i = j + 2
+			if i > n {
+				i = n
+			}
+
+		case c == '\'':
+			i = scanQuoted(src, i, '\'')
+
+		case c == '"':
+			i = scanQuoted(src, i, '"')
+
+		case c == '(':
+			depth++
+			i++
+
+		case c == ')':
+			if depth > 0 {
+				depth--
+			}
+			i++
+
+		case c == sep && depth == 0:
+			chunks = append(chunks, [2]int{start, i})
+			i++
+			start = i
+
+		default:
+			i++
+		}
+	}
+
+	chunks = append(chunks, [2]int{start, n})
+	return chunks
+}
+
 func isSpace(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }

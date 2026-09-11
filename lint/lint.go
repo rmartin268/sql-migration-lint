@@ -38,6 +38,7 @@ func NewLinter() *Linter {
 		Rules: []Rule{
 			{Name: "drop-without-guard", Check: checkDropWithoutGuard},
 			{Name: "select-star", Check: checkSelectStar},
+			{Name: "not-null-no-default", Check: checkNotNullNoDefault},
 			{Name: "missing-semicolon", Check: checkMissingSemicolon},
 		},
 	}
@@ -112,6 +113,71 @@ func checkSelectStar(content []byte, stmt Statement, pos *Positions) []Finding {
 			Col:      col,
 			Severity: "warning",
 			Message:  "SELECT * will silently change shape if columns are added, dropped or reordered; list columns explicitly",
+		})
+	}
+	return findings
+}
+
+var (
+	alterTableRe = regexp.MustCompile(`(?is)\bALTER\s+TABLE\s+\S+\s+`)
+	addColumnRe  = regexp.MustCompile(`(?is)^\s*ADD\s+(?:COLUMN\s+)?(\S+)\s+(.*)$`)
+	notNullRe    = regexp.MustCompile(`(?i)\bNOT\s+NULL\b`)
+	defaultRe    = regexp.MustCompile(`(?i)\bDEFAULT\b`)
+)
+
+// nonColumnAddKeywords are the words that can follow ADD in an ALTER
+// TABLE action without a COLUMN keyword in front of them, none of
+// which name a column being added.
+var nonColumnAddKeywords = map[string]bool{
+	"CONSTRAINT": true,
+	"PRIMARY":    true,
+	"FOREIGN":    true,
+	"UNIQUE":     true,
+	"CHECK":      true,
+}
+
+// checkNotNullNoDefault flags ALTER TABLE ... ADD COLUMN ... NOT NULL
+// with no DEFAULT. On a table that already has rows this forces the
+// database to rewrite (or at least fully validate) every existing row
+// while holding a lock, which on a large table can stall the whole
+// migration and everything waiting behind it.
+func checkNotNullNoDefault(content []byte, stmt Statement, pos *Positions) []Finding {
+	text := content[stmt.Start:stmt.End]
+
+	m := alterTableRe.FindIndex(text)
+	if m == nil {
+		return nil
+	}
+	actionsStart := m[1]
+
+	var findings []Finding
+	for _, chunk := range splitTopLevel(text[actionsStart:], ',') {
+		clause := text[actionsStart+chunk[0] : actionsStart+chunk[1]]
+
+		cm := addColumnRe.FindSubmatchIndex(clause)
+		if cm == nil {
+			continue
+		}
+		colName := string(clause[cm[2]:cm[3]])
+		if nonColumnAddKeywords[strings.ToUpper(colName)] {
+			continue
+		}
+
+		if defaultRe.Match(clause) {
+			continue
+		}
+		nn := notNullRe.FindIndex(clause)
+		if nn == nil {
+			continue
+		}
+
+		offset := stmt.Start + actionsStart + chunk[0] + nn[0]
+		line, col := pos.LineCol(offset)
+		findings = append(findings, Finding{
+			Line:     line,
+			Col:      col,
+			Severity: "warning",
+			Message:  fmt.Sprintf("column %q is NOT NULL with no DEFAULT; on a populated table this locks it for a full rewrite/validation", colName),
 		})
 	}
 	return findings

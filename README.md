@@ -64,6 +64,12 @@ as a CI gate: `sql-migration-lint migrations/*.sql`.
 - `drop-without-guard` — `DROP TABLE` / `DROP COLUMN` without
   `IF EXISTS`.
 - `select-star` — `SELECT * FROM`.
+- `not-null-no-default` — `ALTER TABLE ... ADD COLUMN ... NOT NULL`
+  with no `DEFAULT`. On a table that already has rows, the database
+  has to rewrite or validate every existing row while holding a lock
+  to add that column, and there's no default value to backfill them
+  with, so the migration either fails outright or stalls everything
+  waiting on that lock.
 - `missing-semicolon` — a statement that runs to end of file without a
   terminating `;`.
 
