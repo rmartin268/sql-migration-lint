@@ -77,6 +77,28 @@ The statement splitter understands `--` and `/* */` comments and
 single/double-quoted strings, so semicolons inside a string literal or
 a comment don't confuse it.
 
+## Config
+
+By default every rule above runs at its built-in severity. To disable
+a rule or change its severity, drop a `.sql-migration-lint.json` file
+in the directory you run the linter from, or point at one explicitly
+with `-config`:
+
+```json
+{
+  "rules": {
+    "select-star": {"enabled": false},
+    "not-null-no-default": {"severity": "error"}
+  }
+}
+```
+
+`enabled: false` drops the rule entirely; `severity` forces every
+finding from that rule to `"error"` or `"warning"` regardless of what
+the rule would normally report. A rule name in the config file that
+the linter doesn't recognize is treated as a mistake and fails the
+run rather than being silently ignored.
+
 ## Design
 
 There's no SQL parser here on purpose. `lint/scan.go` only needs to
@@ -90,5 +112,7 @@ another regex and a message.
 ## Status
 
 Early. No dependencies, standard library only. See the checks above
-for what's implemented; there's no config file yet, so every rule
-always runs.
+for what's implemented, and Config above for turning individual rules
+off or changing their severity. Still explicit-file-args only, no
+directory recursion or globbing, and output is text only — no
+`--format=json` yet for CI tools that want structured output.

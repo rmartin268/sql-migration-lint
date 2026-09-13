@@ -5,6 +5,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -12,18 +13,47 @@ import (
 	"github.com/rmartin268/sql-migration-lint/lint"
 )
 
+// defaultConfigPath is loaded automatically when present and -config
+// wasn't given, so a repo can drop in a config file without every
+// invocation needing to name it explicitly.
+const defaultConfigPath = ".sql-migration-lint.json"
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: sql-migration-lint <file.sql> [more.sql ...]")
+	configPath := flag.String("config", "", "path to a rule config file (default: "+defaultConfigPath+" in the current directory, if present)")
+	flag.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: sql-migration-lint [-config file] <file.sql> [more.sql ...]")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) < 1 {
+		flag.Usage()
 		os.Exit(2)
 	}
 
 	linter := lint.NewLinter()
 
+	path, explicit := *configPath, *configPath != ""
+	if !explicit {
+		path = defaultConfigPath
+	}
+	if _, err := os.Stat(path); explicit || err == nil {
+		cfg, err := lint.LoadConfig(path)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		if err := linter.Apply(cfg); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+
 	var total int
 	var hasError bool
 
-	for _, path := range os.Args[1:] {
+	for _, path := range args {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", path, err)
