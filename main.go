@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -20,11 +21,17 @@ const defaultConfigPath = ".sql-migration-lint.json"
 
 func main() {
 	configPath := flag.String("config", "", "path to a rule config file (default: "+defaultConfigPath+" in the current directory, if present)")
+	format := flag.String("format", "text", "output format: \"text\" or \"json\"")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: sql-migration-lint [-config file] <file.sql> [more.sql ...]")
+		fmt.Fprintln(os.Stderr, "usage: sql-migration-lint [-config file] [-format text|json] <file.sql> [more.sql ...]")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *format != "text" && *format != "json" {
+		fmt.Fprintf(os.Stderr, "-format must be \"text\" or \"json\", got %q\n", *format)
+		os.Exit(2)
+	}
 
 	args := flag.Args()
 	if len(args) < 1 {
@@ -50,7 +57,7 @@ func main() {
 		}
 	}
 
-	var total int
+	var findings []lint.Finding
 	var hasError bool
 
 	for _, path := range args {
@@ -62,20 +69,65 @@ func main() {
 		}
 
 		for _, f := range linter.LintFile(path, content) {
-			printFinding(f)
-			total++
+			findings = append(findings, f)
 			if f.Severity == "error" {
 				hasError = true
 			}
 		}
 	}
 
-	if total > 0 {
-		fmt.Printf("\n%d finding(s)\n", total)
+	if *format == "json" {
+		printFindingsJSON(findings)
+	} else {
+		for _, f := range findings {
+			printFinding(f)
+		}
+		if len(findings) > 0 {
+			fmt.Printf("\n%d finding(s)\n", len(findings))
+		}
 	}
+
 	if hasError {
 		os.Exit(1)
 	}
+}
+
+// jsonFinding is the -format=json shape for a single finding. It omits
+// SourceLine: a CI tool that wants the source text can read it from the
+// file itself at File:Line, and the caret rendering in the text format
+// doesn't translate to structured output anyway.
+type jsonFinding struct {
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Col      int    `json:"col"`
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+// printFindingsJSON writes every finding as a single JSON array to
+// stdout, in the same order LintFile produced them (sorted by file
+// argument order, then position). An empty slice still marshals to
+// "[]" rather than "null" so consumers can always index into it.
+func printFindingsJSON(findings []lint.Finding) {
+	out := make([]jsonFinding, len(findings))
+	for i, f := range findings {
+		out[i] = jsonFinding{
+			File:     f.File,
+			Line:     f.Line,
+			Col:      f.Col,
+			Rule:     f.Rule,
+			Severity: f.Severity,
+			Message:  f.Message,
+		}
+	}
+
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	fmt.Println(string(data))
 }
 
 // printFinding renders a finding compiler-style: a summary line

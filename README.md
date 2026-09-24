@@ -59,6 +59,29 @@ after — which is exactly the kind of bug worth catching.
 The process exits non-zero if any finding is an error, so it's usable
 as a CI gate: `sql-migration-lint migrations/*.sql`.
 
+Pass `-format=json` for machine-readable output instead of the text
+report above: a single JSON array of findings (`file`, `line`, `col`,
+`rule`, `severity`, `message`), with no summary line mixed in. Useful
+when something downstream is going to parse the output rather than a
+person reading it in a terminal.
+
+```
+sql-migration-lint -format=json migrations/*.sql
+```
+
+```json
+[
+  {
+    "file": "migrations/0007_drop_legacy_columns.sql",
+    "line": 2,
+    "col": 22,
+    "rule": "drop-without-guard",
+    "severity": "warning",
+    "message": "DROP COLUMN without IF EXISTS is not idempotent; a retry after a partial failure will abort"
+  }
+]
+```
+
 ## Current checks
 
 - `drop-without-guard` — `DROP TABLE` / `DROP COLUMN` without
@@ -114,5 +137,4 @@ another regex and a message.
 Early. No dependencies, standard library only. See the checks above
 for what's implemented, and Config above for turning individual rules
 off or changing their severity. Still explicit-file-args only, no
-directory recursion or globbing, and output is text only — no
-`--format=json` yet for CI tools that want structured output.
+directory recursion or globbing yet.
